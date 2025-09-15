@@ -6,11 +6,18 @@ from sqlalchemy.exc import IntegrityError
 from config.database import engine
 from pydantic import EmailStr
 from datetime import datetime, timedelta, timezone
-import jwt, os
+import jwt, os, io
+import seaborn as sns
+import pandas as pd
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")  # Use non-GUI backend (safe for servers)
+import matplotlib.pyplot as plt
 from passlib.context import CryptContext
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jwt.exceptions import InvalidTokenError
 from dotenv import load_dotenv
+from fastapi.responses import StreamingResponse
 from models.model import Token
 
 router = APIRouter()
@@ -75,6 +82,18 @@ def validate_user(token):
     if user is None:
         raise credentials_exception
     return user
+
+# Calculate Post Reactions
+def calculate_post_reactions(post: Post):
+    total_reactions = post.like + post.praise + post.empathy + post.interest + post.appreciation
+    return total_reactions
+
+# Calculate Post Engagement
+def calculate_post_engagement(post: Post):
+    total_reactions = calculate_post_reactions(post)
+    total_engagement = total_reactions + post.comment + post.share
+    return total_engagement
+
 
 @router.post("/user/signup", status_code=status.HTTP_201_CREATED)
 def register_user(email: Annotated[str, Form()], password: Annotated[str, Form()], name: Annotated[str, Form()]):
@@ -201,6 +220,45 @@ def react_to_post(token: Annotated[str, Depends(oauth2_scheme)], post_id:int, re
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error reacting. {str(e)}")
+
+@router.get("/user/{post_id}/analytics")
+def get_post_analytics(token: Annotated[str, Depends(oauth2_scheme)], post_id:int):
+    try:
+        user = validate_user(token)
+        with Session(engine) as session:
+            statement = select(Post).where( (Post.id == post_id) & (Post.user_id == user.id) )
+            result = session.exec(statement).first()
+            if result is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found!")
+            
+            total_reactions = calculate_post_reactions(result)
+            total_engagement = calculate_post_engagement(result)
+
+            engagement_np = np.array([result.like, result.praise, result.empathy, result.interest, result.appreciation, result.impression, result.comment, result.share])
+
+            engagement_names = np.array(["like", "praise", "empathy", "interest", "appreciation", "impression", "comment", "share"])
+
+            engagement_df = pd.DataFrame({"metric": engagement_names, "value": engagement_np})
+
+            sns.barplot(data=engagement_df, x="metric", y="value")
+            plt.title("Post Engagement Metrics")
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+
+            # Save to buffer
+            buf = io.BytesIO()
+            plt.savefig(buf, format="png")
+            plt.close()
+            buf.seek(0)
+
+            return StreamingResponse(buf, media_type="image/png")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error fetching post analytics! {str(e)}")
+
+
 
 @router.post("/user/create-post/now")
 def create_post(content: Annotated[str, Form()], token: Annotated[str, Depends(oauth2_scheme)]):
