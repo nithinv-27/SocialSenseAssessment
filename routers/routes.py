@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Form, HTTPException, status, Depends
 from typing import Annotated, Union
-from schemas.schema import User, Post, Reaction, Share, Comment
+from schemas.schema import User, Post, Reaction, Share, Comment, Schedule
 from sqlmodel import Session, select
 from sqlalchemy.exc import IntegrityError
 from config.database import engine
 from pydantic import EmailStr
+from zoneinfo import ZoneInfo
 from datetime import datetime, timedelta, timezone
 import jwt, os, io
 import seaborn as sns
@@ -19,6 +20,8 @@ from jwt.exceptions import InvalidTokenError
 from dotenv import load_dotenv
 from fastapi.responses import StreamingResponse
 from models.model import Token
+from task_scheduler import scheduler
+import logging, requests
 
 router = APIRouter()
 
@@ -93,6 +96,42 @@ def calculate_post_engagement(post: Post):
     total_reactions = calculate_post_reactions(post)
     total_engagement = total_reactions + post.comment + post.share
     return total_engagement
+
+# Run Scheduled Job Function
+def run_scheduled_job(user_id, content):
+    try:
+        with Session(engine) as session:
+            statement = select(User).where(User.id == user_id)
+            result = session.exec(statement).first()
+            if result is None:
+                logging.error(f"User {user_id} not found. Skipping job.")
+                return
+            access_token = result.access_token
+            # Post using linkedin api logic goes here
+            # headers = {"access_token":access_token}
+            # data = {"content":content}
+            # res = requests.post("https://api.linkedin.com/v2/ugcPosts", headers=headers, json=data)
+            res = {"ok":True}
+            other_statement = select(Schedule).where( (Schedule.user_id == user_id) & (Schedule.content == content) )
+            other_result = session.exec(other_statement).first()
+            if other_result is None:
+                logging.error(msg="No job found!")
+                return
+            if not res.get("ok"):
+                other_result.status = "Failed"
+                other_result.error = res.get("text", "Error!!!")
+                session.add(other_result)
+                logging.error(msg="Failed to post!")
+                session.commit()
+                return
+            other_result.status = "Published"
+            new_post = Post(content=content, user_id=user_id)
+            session.add(new_post)
+            session.add(other_result)
+            session.commit()
+            return
+    except Exception as e:
+        logging.error(msg=f"Error in run_scheduled_job {str(e)}", exc_info=True)
 
 
 @router.post("/user/signup", status_code=status.HTTP_201_CREATED)
@@ -259,8 +298,33 @@ def get_post_analytics(token: Annotated[str, Depends(oauth2_scheme)], post_id:in
         raise HTTPException(status_code=400, detail=f"Error fetching post analytics! {str(e)}")
 
 
+@router.post("/user/schedule-post")
+def schedule_post(content: Annotated[str, Form()], scheduled_time:Annotated[str, Form()], token: Annotated[str, Depends(oauth2_scheme)]):
+    try:
+        user = validate_user(token)
+        # Format: 2024-07-21T11:00
+        scheduled_time = scheduled_time.replace("T", " ")
+        scheduled_time+=":00"
+        scheduled_dt = datetime.strptime(scheduled_time, "%Y-%m-%d %H:%M:%S")
+        scheduled_dt = scheduled_dt.replace(tzinfo=ZoneInfo("Asia/Kolkata"))
+        scheduled_dt_utc = scheduled_dt.astimezone(timezone.utc)
+        print(type(scheduled_dt_utc))
+        print(str(datetime.now(timezone.utc)))
+        # Format: 2024-07-21 11:00:00
+        if scheduled_dt_utc <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="Scheduled time already passed!")
+        with Session(engine) as session:
+            sample_post = Schedule(content=content, scheduled_at=scheduled_time, user_id=user.id)
+            session.add(sample_post)
+            session.commit()
+            scheduler.add_job(func=run_scheduled_job, trigger='date', run_date=scheduled_time, max_instances=1000, misfire_grace_time=60, kwargs={'user_id':user.id, 'content':content})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error scheduling post! {str(e)}")
 
-@router.post("/user/create-post/now")
+
+@router.post("/user/post-now")
 def create_post(content: Annotated[str, Form()], token: Annotated[str, Depends(oauth2_scheme)]):
     try:
         user = validate_user(token)

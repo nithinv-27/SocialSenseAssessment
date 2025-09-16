@@ -11,3 +11,5 @@ seaborn==0.13.2
 pandas==2.3.2
 numpy==2.3.3
 matplotlib==3.10.6
+APScheduler==3.11.0
+requests==2.32.4

@@ -4,6 +4,7 @@ from routers.routes import router
 from schemas import schema
 from config.database import engine
 from sqlmodel import SQLModel
+from task_scheduler import scheduler
 
 app = FastAPI()
 
@@ -18,5 +19,13 @@ app.add_middleware(
 )
 
 SQLModel.metadata.create_all(engine)
+
+@app.on_event("startup")
+def startup_event():
+    scheduler.start()
+
+@app.on_event("shutdown")
+def shutdown_event():
+    scheduler.shutdown()
 
 app.include_router(router=router)
