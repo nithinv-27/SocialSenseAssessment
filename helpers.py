@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 import logging, requests
 from sqlmodel import Session, select
 from config.database import engine
-from schemas.schema import User, Admin, Post, Schedule
+from schemas.schema import User, Admin, Post
 
 
 load_dotenv("keys.env") 
@@ -79,19 +79,8 @@ def validate_user_or_admin(token):
         raise credentials_exception
     return member, role
 
-# Calculate Post Reactions
-def calculate_post_reactions(post: Post):
-    total_reactions = post.like + post.praise + post.empathy + post.interest + post.appreciation
-    return total_reactions
-
-# Calculate Post Engagement
-def calculate_post_engagement(post: Post):
-    total_reactions = calculate_post_reactions(post)
-    total_engagement = total_reactions + post.comment + post.share
-    return total_engagement
-
 # Run Scheduled Job Function
-def run_scheduled_job(user_id, content):
+def run_scheduled_job(user_id, post_id):
     try:
         with Session(engine) as session:
             statement = select(User).where(User.id == user_id)
@@ -105,7 +94,7 @@ def run_scheduled_job(user_id, content):
             # data = {"content":content}
             # res = requests.post("https://api.linkedin.com/v2/ugcPosts", headers=headers, json=data)
             res = {"ok":True}
-            other_statement = select(Schedule).where( (Schedule.user_id == user_id) & (Schedule.content == content) )
+            other_statement = select(Post).where( Post.id == post_id )
             other_result = session.exec(other_statement).first()
             if other_result is None:
                 logging.error(msg="No job found!")
@@ -118,8 +107,6 @@ def run_scheduled_job(user_id, content):
                 session.commit()
                 return
             other_result.status = "Published"
-            new_post = Post(content=content, user_id=user_id)
-            session.add(new_post)
             session.add(other_result)
             session.commit()
             return
