@@ -8,8 +8,9 @@ load_dotenv("keys.env")
 url_object = URL.create(
     "postgresql+psycopg2",
     username=os.getenv("DB_USERNAME"),
-    password=os.getenv("DB_PASSWORD"),  # plain (unescaped) text
-    host=os.getenv("HOST"),
+    password=os.getenv("DB_PASSWORD"),
+    host=os.getenv("HOST"),        # just "localhost"
+    port=int(os.getenv("PORT", 5432)),  # default 5432 if not set
     database=os.getenv("DB_NAME"),
 )
 
