@@ -9,6 +9,12 @@ class User(SQLModel, table=True):
     name: str
     access_token: str | None = None
 
+class Admin(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    email: EmailStr = Field(unique=True)
+    password: str
+    name: str
+
 class Post(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     content:str
