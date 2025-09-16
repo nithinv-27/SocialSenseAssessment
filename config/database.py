@@ -10,7 +10,6 @@ url_object = URL.create(
     username=os.getenv("DB_USERNAME"),
     password=os.getenv("DB_PASSWORD"),
     host=os.getenv("HOST"),        # just "localhost"
-    port=int(os.getenv("PORT", 5432)),  # default 5432 if not set
     database=os.getenv("DB_NAME"),
 )
 
