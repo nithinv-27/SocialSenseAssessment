@@ -23,6 +23,10 @@ from helpers import hash_password, verify_password, create_access_token, ACCESS_
 
 router = APIRouter()
 
+@router.get("/")
+def home():
+    return {"succ":"ess"}
+
 @router.post("/user/signup", status_code=status.HTTP_201_CREATED)
 def register_user(email: Annotated[EmailStr, Form()], password: Annotated[str, Form()], name: Annotated[str, Form()]):
     hashed_password = hash_password(password=password)
