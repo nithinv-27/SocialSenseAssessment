@@ -114,6 +114,80 @@ def get_posts(token: Annotated[str, Depends(oauth2_scheme)], time_range: str):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error fetching posts! {str(e)}")
     
+@router.get("/top-posts")
+def get_top_posts(token: Annotated[str, Depends(oauth2_scheme)]):
+    try:
+        member, role = validate_user_or_admin(token)  
+
+        reaction_count_subq = (
+            select(Reaction.post_id, func.count(Reaction.id).label("r_count"))
+            .group_by(Reaction.post_id)
+            .subquery()
+        )
+        comment_count_subq = (
+            select(Comment.post_id, func.count(Comment.id).label("c_count"))
+            .group_by(Comment.post_id)
+            .subquery()
+        )
+        share_count_subq = (
+            select(Share.post_id, func.count(Share.id).label("s_count"))
+            .group_by(Share.post_id)
+            .subquery()
+        )
+
+        with Session(engine) as session:
+            if role=="admin":
+                statement = (
+                    select(
+                        Post,
+                        (func.coalesce(reaction_count_subq.c.r_count, 0) +
+                        func.coalesce(comment_count_subq.c.c_count, 0) +
+                        func.coalesce(share_count_subq.c.s_count, 0)).label("engagement")
+                    )
+                    .outerjoin(reaction_count_subq, reaction_count_subq.c.post_id == Post.id)
+                    .outerjoin(comment_count_subq, comment_count_subq.c.post_id == Post.id)
+                    .outerjoin(share_count_subq,   share_count_subq.c.post_id   == Post.id)
+                    .order_by(
+                        (func.coalesce(reaction_count_subq.c.r_count, 0) +
+                        func.coalesce(comment_count_subq.c.c_count, 0) +
+                        func.coalesce(share_count_subq.c.s_count, 0)).desc()
+                    )
+                    .limit(5)
+                )
+            else:
+                statement = (
+                select(
+                    Post,
+                    (func.coalesce(reaction_count_subq.c.r_count, 0) +
+                    func.coalesce(comment_count_subq.c.c_count, 0) +
+                    func.coalesce(share_count_subq.c.s_count, 0)).label("engagement")
+                )
+                .where(Post.user_id == member.id)
+                .outerjoin(reaction_count_subq, reaction_count_subq.c.post_id == Post.id)
+                .outerjoin(comment_count_subq, comment_count_subq.c.post_id == Post.id)
+                .outerjoin(share_count_subq,   share_count_subq.c.post_id   == Post.id)
+                .order_by(
+                    (func.coalesce(reaction_count_subq.c.r_count, 0) +
+                    func.coalesce(comment_count_subq.c.c_count, 0) +
+                    func.coalesce(share_count_subq.c.s_count, 0)).desc()
+                )
+                .limit(5)
+            )
+
+            results = session.exec(statement).all()
+
+            return [
+                {
+                    "post": post,
+                    "engagement": engagement
+                }
+                for post, engagement in results
+            ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error fetching posts! {str(e)}")
+    
 @router.post("/post/{post_id}/comment")
 def comment_post(content: Annotated[str, Form()], token: Annotated[str, Depends(oauth2_scheme)], post_id: int):
     credentials_exception = HTTPException(
@@ -134,13 +208,6 @@ def comment_post(content: Annotated[str, Form()], token: Annotated[str, Depends(
 
             session.add(sample_comment)
 
-            session.commit()
-
-            statement = select(Post).where(Post.id==post_id)
-            result = session.exec(statement).first()
-            result.comment+=1
-
-            session.add(result)
             session.commit()
 
     except HTTPException:
@@ -168,12 +235,6 @@ def comment_post(token: Annotated[str, Depends(oauth2_scheme)], post_id: int):
 
             session.add(sample_share)
 
-            session.commit()
-            statement = select(Post).where(Post.id==post_id)
-            result = session.exec(statement).first()
-            result.share+=1
-
-            session.add(result)
             session.commit()
 
     except HTTPException:
